@@ -1,0 +1,24 @@
+#version 450
+// bw_stride.comp -- strided scalar reads: measures how much useful bandwidth survives as the
+// access stride grows. The knee points reveal the memory subsystem's sector / cacheline size.
+// Spec constant 0 = ROUNDS. Push: n = number of accesses per round, strideBytes.
+layout(local_size_x = 256) in;
+layout(constant_id = 0) const uint ROUNDS = 8;
+layout(push_constant) uniform PC { uint n; uint strideBytes; } pc;
+layout(std430, binding = 0) readonly buffer A { float a[]; };
+layout(std430, binding = 1) writeonly buffer Out { float o[]; };
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint stride = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+    uint step = max(pc.strideBytes / 4u, 1u);
+    float acc = 0.0;
+    for (uint r = 0u; r < ROUNDS; ++r) {
+        for (uint i = gid; i < pc.n; i += stride) {
+            acc += a[i * step];
+        }
+        // Opaque data-dependent exit: stops the compiler from folding the repeat sweeps away.
+        if (acc == 1.2345678e30f) { o[gid] = -1.0; return; }
+    }
+    o[gid] = acc;
+}

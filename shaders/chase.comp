@@ -1,0 +1,60 @@
+#version 450
+// chase.comp -- pointer-chase (dependent-load) latency probe over a randomized cycle.
+// The host uploads a Sattolo permutation of `count` u32 indices; following idx[] from any
+// start visits all elements exactly once, so the access pattern cannot be prefetched.
+// -DCHAINS: 1 | 2 | 4 | 8 independent chains per thread.
+// Push: count (u32 elements), seed.
+layout(local_size_x = 64) in;
+layout(constant_id = 0) const uint ITERS = 512;
+layout(push_constant) uniform PC { uint count; uint seed; } pc;
+layout(std430, binding = 0) readonly buffer Idx { uint idx[]; };
+layout(std430, binding = 1) writeonly buffer Out { uint o[]; };
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint c = pc.count;
+    uint s = pc.seed;
+    uint p0 = (gid * 2654435761u + s) % c;
+#if CHAINS >= 2
+    uint p1 = (gid * 40503u + s * 7u + 1u) % c;
+#endif
+#if CHAINS >= 4
+    uint p2 = (gid * 2246822519u + s * 13u + 3u) % c;
+    uint p3 = (gid * 3266489917u + s * 29u + 5u) % c;
+#endif
+#if CHAINS >= 8
+    uint p4 = (gid * 668265263u + s * 37u + 7u) % c;
+    uint p5 = (gid * 374761393u + s * 41u + 11u) % c;
+    uint p6 = (gid * 1103515245u + s * 43u + 13u) % c;
+    uint p7 = (gid * 214013u + s * 47u + 17u) % c;
+#endif
+
+    for (uint i = 0u; i < ITERS; ++i) {
+        p0 = idx[p0];
+#if CHAINS >= 2
+        p1 = idx[p1];
+#endif
+#if CHAINS >= 4
+        p2 = idx[p2];
+        p3 = idx[p3];
+#endif
+#if CHAINS >= 8
+        p4 = idx[p4];
+        p5 = idx[p5];
+        p6 = idx[p6];
+        p7 = idx[p7];
+#endif
+    }
+
+    uint r = p0;
+#if CHAINS >= 2
+    r ^= p1;
+#endif
+#if CHAINS >= 4
+    r ^= p2 ^ p3;
+#endif
+#if CHAINS >= 8
+    r ^= p4 ^ p5 ^ p6 ^ p7;
+#endif
+    o[gid] = r;
+}

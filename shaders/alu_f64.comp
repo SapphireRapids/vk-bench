@@ -1,0 +1,32 @@
+// alu_f64.comp -- fp64 FMA throughput (needs shaderFloat64).
+// Spec constant 0 = ITERS. 8 independent double accumulators.
+#version 450
+
+#define STEP(a) a = fma(a, b, c)
+#define B8 STEP(a0); STEP(a1); STEP(a2); STEP(a3); STEP(a4); STEP(a5); STEP(a6); STEP(a7);
+#define BODY B8 B8 B8 B8
+
+layout(local_size_x = 128) in;
+layout(constant_id = 0) const uint ITERS = 512;
+layout(push_constant) uniform PC { double seed; } pc;
+layout(std430, binding = 0) writeonly buffer Out { double o[]; };
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    double b = 1.0000000000001 + pc.seed;
+    double c = 0.0009765625 + pc.seed;
+    double a0 = 1.0 + b * double(gid & 3u);
+    double a1 = 0.75 + b * double(gid & 7u);
+    double a2 = 0.5 + b * double(gid & 15u);
+    double a3 = 0.25 + b * double(gid & 31u);
+    double a4 = 0.125 + b * double(gid & 63u);
+    double a5 = 0.0625 + b * double(gid & 127u);
+    double a6 = 0.03125 + b * double(gid & 255u);
+    double a7 = 0.015625 + b * double(gid & 511u);
+
+    for (uint i = 0u; i < ITERS; ++i) {
+        BODY
+    }
+
+    o[gid] = a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7;
+}

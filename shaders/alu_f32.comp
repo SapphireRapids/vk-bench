@@ -1,0 +1,88 @@
+// alu_f32.comp -- fp32 ALU throughput kernel.
+// -DOP: 0 = fma, 1 = mul, 2 = add
+// -DVEC: 1 | 2 | 4   (vector width per instruction)
+// -DDEP: 1 = single dependency chain (latency-bound), 0 = 8 independent accumulators
+// Spec constant 0 = ITERS (outer loop count; body does 32 ops per iteration).
+//
+// IMPORTANT: the coefficients arrive as *four distinct runtime scalars* in the push constant
+// block.  A lane-uniform (splat) vector lets the compiler collapse the whole vector recurrence
+// into a single scalar one -- measured FLOPs then come out 2x/4x too high.  Per-lane runtime
+// values make that impossible.
+#version 450
+
+#ifndef OP
+#define OP 0
+#endif
+#ifndef VEC
+#define VEC 4
+#endif
+#ifndef DEP
+#define DEP 0
+#endif
+
+#if VEC == 1
+#define VT float
+#define MK(x) float(x)
+#define VECT(a) (a).x
+#elif VEC == 2
+#define VT vec2
+#define MK(x) vec2(x)
+#define VECT(a) vec2((a).x, (a).y)
+#else
+#define VT vec4
+#define MK(x) vec4(x)
+#define VECT(a) vec4((a).x, (a).y, (a).z, (a).w)
+#endif
+
+#if OP == 0
+#define STEP(a) a = fma(a, b, c)
+#elif OP == 1
+#define STEP(a) a = a * m
+#else
+#define STEP(a) a = a + d
+#endif
+
+#define B8 STEP(a0); STEP(a1); STEP(a2); STEP(a3); STEP(a4); STEP(a5); STEP(a6); STEP(a7);
+#if DEP == 1
+// One accumulator only: every op depends on the previous one -> latency-bound.
+#define BODY STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0); \
+             STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0); \
+             STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0); \
+             STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0); STEP(a0);
+#else
+#define BODY B8 B8 B8 B8
+#endif
+
+layout(local_size_x = 128) in;
+layout(constant_id = 0) const uint ITERS = 1024;
+layout(push_constant) uniform PC {
+    vec4 laneB;
+    vec4 laneC;
+    vec4 laneM;
+    vec4 laneD;
+} pc;
+layout(std430, binding = 0) writeonly buffer Out { float o[]; };
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    VT b = VECT(pc.laneB);
+    VT c = VECT(pc.laneC);
+    VT m = VECT(pc.laneM);
+    VT d = VECT(pc.laneD);
+    VT a0 = MK(1.0f) + b * MK(float(gid & 3u) + 1.0);
+    VT a1 = MK(0.75f) + b * MK(float(gid & 7u) + 1.0);
+    VT a2 = MK(0.5f) + b * MK(float(gid & 15u) + 1.0);
+    VT a3 = MK(0.25f) + b * MK(float(gid & 31u) + 1.0);
+    VT a4 = MK(0.125f) + b * MK(float(gid & 63u) + 1.0);
+    VT a5 = MK(0.0625f) + b * MK(float(gid & 127u) + 1.0);
+    VT a6 = MK(0.03125f) + b * MK(float(gid & 255u) + 1.0);
+    VT a7 = MK(0.015625f) + b * MK(float(gid & 511u) + 1.0);
+
+    for (uint i = 0u; i < ITERS; ++i) {
+        BODY
+    }
+
+    VT one = MK(1.0);
+    o[gid] = dot(a0, one) + dot(a1, one) + dot(a2, one) + dot(a3, one) +
+             dot(a4, one) + dot(a5, one) + dot(a6, one) + dot(a7, one);
+}

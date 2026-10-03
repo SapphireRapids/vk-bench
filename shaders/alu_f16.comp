@@ -1,0 +1,58 @@
+// alu_f16.comp -- packed fp16 FMA throughput (needs shaderFloat16 +
+// GL_EXT_shader_explicit_arithmetic_types_float16).
+// -DVEC: 2 | 4  (f16vec2 / f16vec4 -- the packed forms the hardware has)
+// Spec constant 0 = ITERS. Coefficients arrive as distinct runtime scalars per lane
+// (see alu_f32.comp for why lane-uniform vectors must be avoided).
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+#ifndef VEC
+#define VEC 2
+#endif
+
+#if VEC == 2
+#define VT f16vec2
+#define VECT(a) f16vec2((a).x, (a).y)
+#else
+#define VT f16vec4
+#define VECT(a) f16vec4((a).x, (a).y, (a).z, (a).w)
+#endif
+
+#define STEP(a) a = fma(a, b, c)
+#define B8 STEP(a0); STEP(a1); STEP(a2); STEP(a3); STEP(a4); STEP(a5); STEP(a6); STEP(a7);
+#define BODY B8 B8 B8 B8
+
+layout(local_size_x = 128) in;
+layout(constant_id = 0) const uint ITERS = 1024;
+layout(push_constant) uniform PC {
+    vec4 laneB;
+    vec4 laneC;
+} pc;
+layout(std430, binding = 0) writeonly buffer Out { float o[]; };
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    // values are exact in fp16: 1 + k/1024 and k/1024
+    VT b = VECT(pc.laneB);
+    VT c = VECT(pc.laneC);
+    VT a0 = VT(0.5) + b * VT(float(gid & 3u));
+    VT a1 = VT(0.75) + b * VT(float(gid & 7u));
+    VT a2 = VT(1.0) + b * VT(float(gid & 15u));
+    VT a3 = VT(1.25) + b * VT(float(gid & 31u));
+    VT a4 = VT(1.5) + b * VT(float(gid & 63u));
+    VT a5 = VT(1.75) + b * VT(float(gid & 127u));
+    VT a6 = VT(2.0) + b * VT(float(gid & 255u));
+    VT a7 = VT(2.25) + b * VT(float(gid & 511u));
+
+    for (uint i = 0u; i < ITERS; ++i) {
+        BODY
+    }
+
+#if VEC == 2
+    vec2 s = vec2(a0) + vec2(a1) + vec2(a2) + vec2(a3) + vec2(a4) + vec2(a5) + vec2(a6) + vec2(a7);
+    o[gid] = s.x + s.y;
+#else
+    vec4 s = vec4(a0) + vec4(a1) + vec4(a2) + vec4(a3) + vec4(a4) + vec4(a5) + vec4(a6) + vec4(a7);
+    o[gid] = s.x + s.y + s.z + s.w;
+#endif
+}

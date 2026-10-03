@@ -1,0 +1,25 @@
+// shared.comp -- shared-memory (LDS) read throughput with conflict-free vectorized access.
+// Each thread reads a rotating vec4 slot of its workgroup's shared array.
+#version 450
+
+layout(local_size_x = 256) in;
+layout(constant_id = 0) const uint ITERS = 1024;
+layout(push_constant) uniform PC { float seed; uint pad; } pc;
+layout(std430, binding = 0) writeonly buffer Out { float o[]; };
+
+shared vec4 smem[256];
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint tid = gl_LocalInvocationID.x;
+    vec4 acc = vec4(1.0 + float(tid) * 1e-6 + pc.seed);
+    smem[tid] = acc;
+    barrier();
+
+    for (uint i = 0u; i < ITERS; ++i) {
+        // Index varies with i so the load cannot be hoisted; unit stride => no bank conflicts.
+        acc = smem[(tid + i) & 255u] + acc * 1e-30;
+    }
+
+    o[gid] = acc.x + acc.y + acc.z + acc.w;
+}

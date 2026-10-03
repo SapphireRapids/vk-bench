@@ -1,0 +1,50 @@
+#version 450
+// bw.comp -- streaming read / write / copy bandwidth over a vec4 float buffer.
+// -DBW_MODE: 0 = read (reduce), 1 = write (store), 2 = copy (read+write)
+// Spec constant 0 = ROUNDS (how often the whole footprint is swept per dispatch).
+// Push: nVec = number of vec4 elements to touch.
+//
+// The read path ends every sweep with a data-dependent early exit.  Without it the compiler is
+// free to hoist the (loop-invariant) loads out of the outer round loop -- later sweeps then cost
+// nothing and the reported bandwidth comes out several times too high.  The compare is never true
+// in practice; it exists so the compiler cannot prove that.
+layout(local_size_x = 256) in;
+layout(constant_id = 0) const uint ROUNDS = 16;
+layout(push_constant) uniform PC { uint nVec; uint pad; } pc;
+layout(std430, binding = 0) buffer A { vec4 a[]; };
+layout(std430, binding = 1) buffer B { vec4 b[]; };
+layout(std430, binding = 2) writeonly buffer Out { float o[]; };
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint stride = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+    uint n = pc.nVec;
+
+#if BW_MODE == 0
+    vec4 acc = vec4(0.0);
+    // 4 loads per loop iteration amortises the loop control, so small (cache-resident) footprints
+    // measure memory throughput instead of loop overhead.
+    const uint step = stride * 4u;
+    for (uint r = 0u; r < ROUNDS; ++r) {
+        uint i = gid;
+        for (; i + 3u * stride < n; i += step) {
+            acc += a[i] + a[i + stride] + a[i + 2u * stride] + a[i + 3u * stride];
+        }
+        for (; i < n; i += stride) acc += a[i];
+        if (acc.x == 1.2345678e30f) { o[gid] = -1.0; return; }
+    }
+    o[gid] = acc.x + acc.y + acc.z + acc.w;
+#elif BW_MODE == 1
+    vec4 v = vec4(1.0, 2.0, 3.0, float(gid & 7u));
+    for (uint r = 0u; r < ROUNDS; ++r) {
+        for (uint i = gid; i < n; i += stride) a[i] = v;
+    }
+    o[gid] = v.w;
+#else
+    uint halfN = n / 2u;
+    for (uint r = 0u; r < ROUNDS; ++r) {
+        for (uint i = gid; i < halfN; i += stride) b[i] = a[i];
+    }
+    o[gid] = 1.0;
+#endif
+}

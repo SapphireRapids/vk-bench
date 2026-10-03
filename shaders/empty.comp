@@ -1,0 +1,6 @@
+#version 450
+// empty.comp -- measures pure dispatch overhead: the kernel does nothing at all.
+layout(local_size_x = 128) in;
+
+void main() {
+}

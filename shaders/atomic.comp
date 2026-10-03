@@ -1,0 +1,22 @@
+#version 450
+// atomic.comp -- global atomic throughput.
+// -DATOM_MODE: 0 = all invocations hammer one address (serialization), 1 = scattered addresses.
+// Spec constant 0 = ITERS. Push: nSlots, seed.
+layout(local_size_x = 128) in;
+layout(constant_id = 0) const uint ITERS = 256;
+layout(push_constant) uniform PC { uint nSlots; uint seed; } pc;
+layout(std430, binding = 0) buffer A { uint a[]; };
+layout(std430, binding = 1) writeonly buffer Out { uint o[]; };
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+#if ATOM_MODE == 0
+    uint slot = 0u;
+#else
+    uint slot = (gid + pc.seed) % max(pc.nSlots, 1u);
+#endif
+    for (uint i = 0u; i < ITERS; ++i) {
+        atomicAdd(a[slot], 1u);
+    }
+    o[gid] = slot;
+}

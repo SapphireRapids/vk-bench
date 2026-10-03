@@ -1,0 +1,46 @@
+// alu_int.comp -- int32 ALU throughput: -DIOP 0 = imad (a*b+c), 1 = iadd (a+c).
+// Uses uvec4 lanes (4 int ops per instruction) with 8 accumulators; wrapping is defined for uint.
+// Coefficients are distinct runtime values per lane (see alu_f32.comp for why).
+#version 450
+
+#ifndef IOP
+#define IOP 0
+#endif
+
+#if IOP == 0
+#define STEP(a) a = a * b + c
+#else
+#define STEP(a) a = a + c
+#endif
+
+#define B8 STEP(a0); STEP(a1); STEP(a2); STEP(a3); STEP(a4); STEP(a5); STEP(a6); STEP(a7);
+#define BODY B8 B8 B8 B8
+
+layout(local_size_x = 128) in;
+layout(constant_id = 0) const uint ITERS = 1024;
+layout(push_constant) uniform PC {
+    uvec4 laneB;
+    uvec4 laneC;
+} pc;
+layout(std430, binding = 0) writeonly buffer Out { uint o[]; };
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uvec4 b = pc.laneB;
+    uvec4 c = pc.laneC;
+    uvec4 a0 = uvec4(gid + 1u);
+    uvec4 a1 = uvec4(gid + 2u);
+    uvec4 a2 = uvec4(gid + 3u);
+    uvec4 a3 = uvec4(gid + 5u);
+    uvec4 a4 = uvec4(gid + 7u);
+    uvec4 a5 = uvec4(gid + 11u);
+    uvec4 a6 = uvec4(gid + 13u);
+    uvec4 a7 = uvec4(gid + 17u);
+
+    for (uint i = 0u; i < ITERS; ++i) {
+        BODY
+    }
+
+    o[gid] = a0.x + a0.y + a0.z + a0.w + a1.x + a2.y + a3.z + a4.w +
+             a5.x + a6.y + a7.z + a7.w;
+}

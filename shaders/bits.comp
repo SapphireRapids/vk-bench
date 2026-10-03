@@ -1,0 +1,39 @@
+// bits.comp -- bit-manipulation throughput. -DBIT_OP: 0 = clz, 1 = bitCount, 2 = findLSB, 3 = bitfieldReverse.
+// The chains converge to fixed points for some ops; that is fine, the instruction still executes.
+#version 450
+
+#ifndef BIT_OP
+#define BIT_OP 0
+#endif
+
+#if BIT_OP == 0
+#define FN(x) uint(findMSB(x))
+#elif BIT_OP == 1
+#define FN(x) uint(bitCount(x))
+#elif BIT_OP == 2
+#define FN(x) uint(findLSB(x))
+#else
+#define FN(x) bitfieldReverse(x)
+#endif
+
+#define B8 a0 = FN(a0); a1 = FN(a1); a2 = FN(a2); a3 = FN(a3); \
+           a4 = FN(a4); a5 = FN(a5); a6 = FN(a6); a7 = FN(a7);
+#define BODY B8 B8 B8 B8
+
+layout(local_size_x = 128) in;
+layout(constant_id = 0) const uint ITERS = 1024;
+layout(push_constant) uniform PC { uint seed; } pc;
+layout(std430, binding = 0) writeonly buffer Out { uint o[]; };
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint s = gid * 2654435761u ^ pc.seed;
+    uint a0 = s | 1u, a1 = s * 3u + 1u, a2 = s * 5u + 3u, a3 = s * 7u + 5u;
+    uint a4 = s ^ 0x55555555u, a5 = s ^ 0xAAAAAAAAu, a6 = s * 11u + 7u, a7 = s * 13u + 11u;
+
+    for (uint i = 0u; i < ITERS; ++i) {
+        BODY
+    }
+
+    o[gid] = a0 ^ a1 ^ a2 ^ a3 ^ a4 ^ a5 ^ a6 ^ a7;
+}

@@ -1,0 +1,64 @@
+// coopmat_khr.comp -- cooperative matrix throughput kernel, VK_KHR_cooperative_matrix / GLSL_KHR_cooperative_matrix.
+// Fully parameterized at build time via -D defines:
+//   CM_M, CM_N, CM_K   tile dimensions
+//   CM_TA, CM_TB, CM_TC  component types (float16_t, float, int8_t, uint8_t, int32_t, bfloat16_t, float8_*, float64_t)
+//   CM_WG              local_size_x (default 64)
+//   CM_NEED_F16        define to pull in GL_EXT_shader_explicit_arithmetic_types_float16
+//   CM_NEED_INT8       define to pull in GL_EXT_shader_explicit_arithmetic_types_int8
+//   CM_NEED_BF16       define to pull in GL_EXT_shader_explicit_arithmetic_types_bfloat16
+//   CM_NEED_FP8        define to pull in GL_EXT_shader_explicit_arithmetic_types_float8
+//   CM_NEED_F64        define to pull in GL_EXT_shader_explicit_arithmetic_types_float64
+//
+// Semantics: each subgroup loads one A tile and one B tile, then runs ITERS mul-adds into
+// two independent accumulator tiles (ILP=2) and stores the result. Counting convention:
+// one coopMatMulAdd(M,N,K) = 2*M*N*K flops.
+#version 450
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#ifdef CM_NEED_F16
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#endif
+#ifdef CM_NEED_INT8
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#endif
+#ifdef CM_NEED_BF16
+#extension GL_EXT_bfloat16 : require
+#endif
+#ifdef CM_NEED_FP8
+#extension GL_EXT_float_e4m3 : require
+#endif
+#ifdef CM_NEED_F64
+#extension GL_EXT_shader_explicit_arithmetic_types_float64 : require
+#endif
+#ifndef CM_WG
+#define CM_WG 64
+#endif
+
+layout(local_size_x = CM_WG) in;
+
+layout(constant_id = 0) const uint ITERS = 256;
+
+layout(std430, binding = 0) buffer BufA { CM_TA a[]; };
+layout(std430, binding = 1) buffer BufB { CM_TB b[]; };
+layout(std430, binding = 2) buffer BufC { CM_TC c[]; };
+
+#define CM_ACC coopmat<CM_TC, gl_ScopeSubgroup, CM_M, CM_N, gl_MatrixUseAccumulator>
+
+void main() {
+    coopmat<CM_TA, gl_ScopeSubgroup, CM_M, CM_K, gl_MatrixUseA> mA;
+    coopmat<CM_TB, gl_ScopeSubgroup, CM_K, CM_N, gl_MatrixUseB> mB;
+    CM_ACC mC0;
+    CM_ACC mC1;
+
+    coopMatLoad(mA, a, 0u, CM_K, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatLoad(mB, b, 0u, CM_N, gl_CooperativeMatrixLayoutRowMajor);
+    mC0 = CM_ACC(CM_TC(0));
+    mC1 = CM_ACC(CM_TC(0));
+
+    for (uint i = 0; i < ITERS; ++i) {
+        mC0 = coopMatMulAdd(mA, mB, mC0);
+        mC1 = coopMatMulAdd(mA, mB, mC1);
+    }
+
+    coopMatStore(mC0, c, 0u, CM_N, gl_CooperativeMatrixLayoutRowMajor);
+}
