@@ -1,0 +1,11 @@
+# build-time dependencies (fetch with tools/fetch_toolchain.ps1)
+/tools/glslang/
+/vendor/
+tools/*.zip
+
+# build intermediates and outputs
+/build/
+*.obj
+*.spv
+vkbench-report/
+vkbench.exe
